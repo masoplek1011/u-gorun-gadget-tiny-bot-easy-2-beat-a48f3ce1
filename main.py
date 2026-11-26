@@ -2,9 +2,13 @@
 
 Strategy (per symbol, hourly bars, long only, cash otherwise):
   * EMA(8) / EMA(21) crossover on closes. Enter long when the fast EMA
-    crosses above the slow EMA, but only while the slow EMA itself is
-    rising (its value now is above its value 6 bars ago) -- that filters
-    out sideways chop where crossovers whipsaw.
+    sits above the slow EMA while the slow EMA itself is rising (its
+    value now is above its value 6 bars ago) -- a level entry, not just
+    the cross bar, so a trend that started during warm-up or while the
+    filter was off is still caught, and sideways chop (flat slow EMA)
+    keeps the bot in cash. After an exit, a symbol rests 6 bars before
+    it may re-enter, so a stop-loss exit is not bought straight back on
+    the next bar.
   * Exit the whole position when the fast EMA crosses back below the slow
     EMA, or when the position is worth 8% under its cost (stop-loss), or
     40% over its cost (take-profit).
@@ -27,6 +31,7 @@ import sys
 FAST_SPAN = 8
 SLOW_SPAN = 21
 SLOPE_BARS = 6          # slow EMA must be above its value this many bars ago
+COOLDOWN_BARS = 6       # bars a symbol rests after an exit before re-entry
 STOP_NUM = 92           # exit when position value <= 92% of cost
 STOP_DEN = 100
 TAKE_NUM = 140          # exit when position value >= 140% of cost
@@ -97,6 +102,7 @@ class Bot:
         self.positions = {}      # symbol -> (qty, cost) as ints
         self.series = {}
         self.peak_equity = self.cash
+        self.cooldown = {}   # symbol -> first seq it may re-enter on
         self.seq = -1
         self.next_id = 1
 
@@ -129,7 +135,6 @@ class Bot:
     def on_batch(self, batch):
         self.seq = batch["seq"]
         self.apply_account(batch["account"])
-        cross_up = set()
         fresh = set()
         closes = {}
         for bar in batch["bars"]:
@@ -146,8 +151,6 @@ class Bot:
                 continue
             s.push(float(bar["c"]) / (10 ** self.price_scale(symbol)))
             if s.gap is not None and s.now is not None:
-                if s.now > 0 and s.gap <= 0:
-                    cross_up.add(symbol)
                 if s.now < 0 and s.gap >= 0:
                     s.down = True
         if self.seq < self.warmup_bars:
@@ -163,6 +166,7 @@ class Bot:
                 sym = symbol["symbol"]
                 if sym in self.positions and len(orders) < max_orders:
                     orders.append(self._sell(sym))
+                    self.cooldown[sym] = self.seq + COOLDOWN_BARS
             self.peak_equity = self.equity
             return orders
 
@@ -173,15 +177,17 @@ class Bot:
             if sym not in fresh:
                 continue
             held = self.positions.get(sym)
+            s = self.series[sym]
             if held is not None:
                 qty, cost = held
                 val = self.value(sym, qty, closes[sym])
-                s = self.series[sym]
                 if (s.down
                         or val * STOP_DEN <= cost * STOP_NUM
                         or val * TAKE_DEN >= cost * TAKE_NUM):
                     sells.append(self._sell(sym))
-            elif sym in cross_up and self.series[sym].rising():
+                    self.cooldown[sym] = self.seq + COOLDOWN_BARS
+            elif (s.now is not None and s.now > 0 and s.rising()
+                    and self.seq >= self.cooldown.get(sym, -1)):
                 entries.append(sym)
 
         orders.extend(sells[:max_orders])
