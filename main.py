@@ -6,7 +6,9 @@ Strategy (per symbol, hourly bars, long only, cash otherwise):
     value now is above its value 6 bars ago) -- a level entry, not just
     the cross bar, so a trend that started during warm-up or while the
     filter was off is still caught, and sideways chop (flat slow EMA)
-    keeps the bot in cash. After an exit, a symbol rests 6 bars before
+    keeps the bot in cash. A second confirmation is required: the close
+    must also sit above its close 24 bars ago, so entries only fire
+    into a genuine 24-hour uptrend. After an exit, a symbol rests 6 bars before
     it may re-enter, so a stop-loss exit is not bought straight back on
     the next bar.
   * Exit the whole position when the fast EMA crosses back below the slow
@@ -31,6 +33,7 @@ import sys
 FAST_SPAN = 8
 SLOW_SPAN = 21
 SLOPE_BARS = 6          # slow EMA must be above its value this many bars ago
+MOM_BARS = 24           # entry needs close above its close this many bars ago
 COOLDOWN_BARS = 6       # bars a symbol rests after an exit before re-entry
 STOP_NUM = 92           # exit when position value <= 92% of cost
 STOP_DEN = 100
@@ -66,6 +69,7 @@ class Series:
         self.fast = Ema(FAST_SPAN)
         self.slow = Ema(SLOW_SPAN)
         self.slow_hist = []      # past slow EMA values, for the rising check
+        self.closes = []         # past closes, for the momentum check
         self.gap = None          # fast - slow after the previous bar
         self.now = None          # fast - slow after this bar
         self.down = False        # sell signal held while fast stays under slow
@@ -73,6 +77,9 @@ class Series:
     def push(self, close):
         self.fast.step(close)
         self.slow.step(close)
+        self.closes.append(close)
+        if len(self.closes) > MOM_BARS + 1:
+            self.closes.pop(0)
         self.gap = self.now
         if self.fast.value is not None and self.slow.value is not None:
             self.now = self.fast.value - self.slow.value
@@ -87,6 +94,12 @@ class Series:
         if len(self.slow_hist) <= SLOPE_BARS:
             return False
         return self.slow_hist[-1] > self.slow_hist[-1 - SLOPE_BARS]
+
+    def momentum(self):
+        """True when the close is above its close MOM_BARS bars ago."""
+        if len(self.closes) <= MOM_BARS:
+            return False
+        return self.closes[-1] > self.closes[-1 - MOM_BARS]
 
 
 class Bot:
@@ -187,6 +200,7 @@ class Bot:
                     sells.append(self._sell(sym))
                     self.cooldown[sym] = self.seq + COOLDOWN_BARS
             elif (s.now is not None and s.now > 0 and s.rising()
+                    and s.momentum()
                     and self.seq >= self.cooldown.get(sym, -1)):
                 entries.append(sym)
 

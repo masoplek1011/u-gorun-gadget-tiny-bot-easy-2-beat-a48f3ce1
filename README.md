@@ -10,7 +10,7 @@ A tiny paper-trading bot for make.fun's ["Tiny Bot, Easy $2: Beat Buy-and-Hold o
 
 Per symbol, the bot runs an EMA(8) / EMA(21) crossover on hourly closes:
 
-- **Enter long** when the fast EMA crosses above the slow EMA, but only while the slow EMA itself is rising (above its value 6 bars ago) — this filters out sideways chop where crossovers whipsaw.
+- **Enter long** when the fast EMA sits above the slow EMA while the slow EMA itself is rising (above its value 6 bars ago) — this filters out sideways chop where crossovers whipsaw — and the close is above its close 24 bars ago, so entries only fire into a genuine 24-hour uptrend.
 - **Exit** the whole position when the fast EMA crosses back below the slow EMA, when the position is worth 8% under its cost (stop-loss), or 40% over its cost (take-profit).
 - **Equity brake:** if equity falls 8% below its running peak, the bot flattens every position at once and resets the peak, so a sharp regime break cannot bleed the account before the per-symbol exits fire.
 - **Sizing:** equity split evenly across the 7 symbols, capped at the harness 25% max weight per symbol; sells are sent before buys in each reply.
